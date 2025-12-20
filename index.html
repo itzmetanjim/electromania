@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Electromania!</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="hotbar">
+        <div id="selectelectron" class="hotbar-item selector">
+            <div class="decorative-electron">-</div>
+            <span>Electron</span>
+        </div>
+        <div id="selectproton" class="hotbar-item selector">
+            <div class="decorative-proton">+</div>
+            <span>Proton</span>
+        </div>
+        <div id="selectneutron" class="hotbar-item selector">
+            <div class="decorative-neutron"></div>
+            <span>Neutron</span>
+        </div>
+        <div class="hotbar-separator"></div>
+        <div id="selectbarmagnet" class="hotbar-item selector">
+            <div class="decorative-barmagnet"><div class="pole-n">N</div><div class="pole-s">S</div></div>
+            <span>Bar Magnet</span>
+        </div>
+        <div id="selectelectricplate" class="hotbar-item selector">
+            <div class="decorative-electricplate"></div>
+            <span>E-Plate</span>
+        </div>
+    </div>
+    <div id="world">
+    </div>
+    <div id="controls">
+    <h2>Controls <span class="hide" id="paused">PAUSED</span></h2>
+    <span id="curloc">Move your mouse cursor</span><br>
+    <label>Launch Power: <input type="range" id="launchPower" min="0" max="10" value="1" step="0.1"><span id="launchPowerValue">1</span></label><br>
+    <code>Drag</code> to spawn particle with velocity<br>
+    <code>Click</code> to spawn particle without velocity<br>
+    <code>Right Click</code> to remove particle<br>
+    <code>Space</code> to pause/resume<br>
+    <code>Shift+C</code> to clear all particles<br>
+    <code>Ctrl+Shift+Click</code> orbit electron (clockwise)<br>
+    <code>Alt+Shift+Click</code> orbit electron (counter-clockwise)<br>
+    <code>Shift+Drag</code> move particles in radius<br>
+    <code>Ctrl+Drag</code> launch particles in radius<br>
+    <code>Alt+Drag</code> (paused) rotate last plate
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
