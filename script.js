@@ -6,6 +6,38 @@ let particleData = [];
 let plateData = [];
 let lastPlacedPlate = null;
 
+const trailCanvas = document.createElement("canvas")
+trailCanvas.id = "trailCanvas"
+trailCanvas.setAttribute("aria-hidden", "true")
+world.appendChild(trailCanvas)
+const trailCtx = trailCanvas.getContext("2d")
+
+const resizeTrailCanvas = () => {
+    if (!trailCtx) return
+    const rect = world.getBoundingClientRect()
+    const dpr = window.devicePixelRatio || 1
+    trailCanvas.width = Math.max(1, Math.floor(rect.width * dpr))
+    trailCanvas.height = Math.max(1, Math.floor(rect.height * dpr))
+    trailCtx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    for (const p of particleData) {
+        p._trailPrev = null
+    }
+}
+
+const clearTrails = () => {
+    if (!trailCtx) return
+    trailCtx.setTransform(1, 0, 0, 1, 0, 0)
+    trailCtx.clearRect(0, 0, trailCanvas.width, trailCanvas.height)
+    resizeTrailCanvas()
+
+    for (const p of particleData) {
+        p._trailPrev = null
+    }
+}
+
+window.addEventListener("resize", resizeTrailCanvas)
+resizeTrailCanvas()
+
 const createNeutron = (x, y, vx, vy) => {
     const neutron = document.createElement('span')
     neutron.className = "particle neutron"
@@ -24,8 +56,6 @@ document.body.addEventListener("contextmenu", (e)=>{
     const rect = world.getBoundingClientRect()
     const x = pxtovh(e.clientX - rect.left)
     const y = pxtovh(rect.bottom - e.clientY)
-    // Priority: delete particle only if cursor is actually on it.
-    // Otherwise, delete a plate only if cursor is on it.
     if (!delParticleAt(x, y)) {
         delPlateAt(x, y)
     }
@@ -74,8 +104,6 @@ const createElectron = (x, y, vx, vy) => {
 }
 
 const delParticleAt = (x, y) => {
-    // Only delete if the cursor is within the particle's visual radius.
-    // (proton/neutron are 10vh, electron is 7.5vh)
     let hitIndex = -1
     let hitDist = Infinity
     for (let i = 0; i < particleData.length; i++) {
@@ -112,7 +140,6 @@ const pointInRotatedRect = (rect, x, y) => {
 }
 
 const delPlateAt = (x, y) => {
-    // Delete the top-most plate the cursor is actually over.
     for (let i = plateData.length - 1; i >= 0; i--) {
         const p = plateData[i]
         if (pointInRotatedRect(p, x, y)) {
@@ -179,7 +206,6 @@ const createElectricPlate = (x, y, width, height, rotation = 0) => {
     plate.style.height = height + "vh"
     plate.style.transform = `rotate(${rotation}deg)`
     plate.style.transformOrigin = "center center"
-    // Arrow shows the direction a proton would accelerate inside the plate.
     plate.innerHTML = `
         <svg class="field-arrow" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 20V6" />
@@ -191,21 +217,14 @@ const createElectricPlate = (x, y, width, height, rotation = 0) => {
         element: plate,
         type: 'electricplate',
         x, y, width, height, rotation,
-        // strength is a "gameplay" field value (not real units)
         strength: 8,
-        // +1 means the arrow direction is the force direction for a proton.
         charge: 1
     }
     plateData.push(data)
     lastPlacedPlate = data
     return data
 }
-// Horseshoe magnets were removed; keep this symbol harmless if referenced.
-// (Some older codepaths or cached pages might still call it.)
-// eslint-disable-next-line no-unused-vars
 const createHorseshoeMagnet = () => null
-
-// Calculate field effects from plates on a particle
 const calcPlateForces = (particle) => {
     let fx = 0
     let fy = 0
@@ -221,42 +240,28 @@ const calcPlateForces = (particle) => {
         if (dist < 0.5) continue // minimum distance to prevent extreme forces
         const rotRad = plate.rotation * Math.PI / 180
 
-        // Local coords (plate space)
         const localX = dx * Math.cos(-rotRad) - dy * Math.sin(-rotRad)
         const localY = dx * Math.sin(-rotRad) + dy * Math.cos(-rotRad)
         const insidePlate = Math.abs(localX) <= plate.width / 2 && Math.abs(localY) <= plate.height / 2
         
         if (plate.type === 'barmagnet') {
-            // Use a simple 2D Lorentz force with B out of the screen (Bz).
-            // This bends paths into circles instead of "kicking" particles away.
             if (particle.charge !== 0) {
                 const speed = Math.sqrt(particle.vx * particle.vx + particle.vy * particle.vy)
                 if (speed > 0.001) {
-                    // Strong and fairly uniform inside the magnet's rectangle, gentle fringe outside.
                     const Bz = insidePlate
                         ? plate.strength
                         : plate.strength * 0.15 / (dist * dist + 20)
-
-                    // Gameplay tweak: multiply by mass so both protons and electrons visibly curve.
-                    // (Acceleration later divides by mass.)
                     const massFactor = particle.mass
-
-                    // F = q (v x B) with B=(0,0,Bz) => Fx = q*vy*Bz, Fy = -q*vx*Bz
                     fx += particle.charge * particle.vy * Bz * massFactor
                     fy += -particle.charge * particle.vx * Bz * massFactor
                 }
             }
         } else if (plate.type === 'electricplate') {
-            // Uniform-ish electric field inside the plate's rectangle, oriented by rotation.
-            // Arrow indicates direction a proton accelerates.
             if (particle.charge !== 0) {
                 const ex = -Math.sin(rotRad)
                 const ey = Math.cos(rotRad)
                 const E = insidePlate ? (plate.strength * plate.charge) : 0
-
-                // Gameplay tweak: multiply by mass so electrons don't get instantly flung.
                 const massFactor = particle.mass
-
                 // F = qE
                 fx += particle.charge * E * ex * massFactor
                 fy += particle.charge * E * ey * massFactor
@@ -293,6 +298,7 @@ window.addEventListener("keydown", (e) => {
         }
         plateData.length = 0
         lastPlacedPlate = null
+        clearTrails()
     }
 })
 
@@ -341,6 +347,86 @@ const calcAcceleration = (p1, index) => {
     return { ax: fx / p1.mass, ay: fy / p1.mass }
 }
 
+function drawTrails() {
+    if (!trailCtx) return
+    const rect = world.getBoundingClientRect()
+
+    const bgR = 0x0a
+    const bgG = 0x0a
+    const bgB = 0x0f
+    if (particleData.length === 0) {
+        trailCtx.clearRect(0, 0, rect.width, rect.height)
+        return
+    }
+    trailCtx.save()
+    trailCtx.globalCompositeOperation = "destination-out"
+    trailCtx.fillStyle = "rgba(0,0,0,0.18)"
+    trailCtx.fillRect(0, 0, rect.width, rect.height)
+    trailCtx.restore()
+
+    trailCtx.save()
+    trailCtx.globalCompositeOperation = "source-over"
+    trailCtx.lineCap = "round"
+    trailCtx.lineJoin = "round"
+    trailCtx.filter = "none"
+    trailCtx.globalAlpha = 1
+
+    for (const p of particleData) {
+        let radiusVh = 5
+        let trailR = 200
+        let trailG = 200
+        let trailB = 200
+        let visualAlpha = 0.50
+        if (p.charge === -1) {
+            radiusVh = 3.75
+            trailR = 0
+            trailG = 106
+            trailB = 255
+            visualAlpha = 0.55
+        } else if (p.charge === 1) {
+            radiusVh = 5
+            trailR = 255
+            trailG = 0
+            trailB = 0
+            visualAlpha = 0.50
+        } else {
+            radiusVh = 5
+            trailR = 170
+            trailG = 170
+            trailB = 170
+            visualAlpha = 0.40
+        }
+
+        const cxVh = p.x + radiusVh
+        const cyVh = p.y + radiusVh
+        const pxX = cxVh * rect.height / 100
+        const pxY = rect.height - (cyVh * rect.height / 100)
+        const rPx = radiusVh * rect.height / 100
+
+        const prev = p._trailPrev
+        p._trailPrev = { x: pxX, y: pxY }
+        if (!prev) continue
+
+        const dx = pxX - prev.x
+        const dy = pxY - prev.y
+        const stepDist = Math.sqrt(dx * dx + dy * dy)
+        if (!Number.isFinite(stepDist) || stepDist < 0.01) continue
+
+        trailCtx.lineWidth = Math.max(1, rPx * 0.18)
+
+        const outR = Math.round(visualAlpha * trailR + (1 - visualAlpha) * bgR)
+        const outG = Math.round(visualAlpha * trailG + (1 - visualAlpha) * bgG)
+        const outB = Math.round(visualAlpha * trailB + (1 - visualAlpha) * bgB)
+        trailCtx.strokeStyle = `rgb(${outR},${outG},${outB})`
+        trailCtx.beginPath()
+        trailCtx.moveTo(prev.x, prev.y)
+        trailCtx.lineTo(pxX, pxY)
+        trailCtx.stroke()
+    }
+
+    trailCtx.restore()
+}
+
 const doPhysics = () => {
     let accelerations = []
     for (let i = 0; i < particleData.length; i++) {
@@ -372,6 +458,8 @@ const doPhysics = () => {
         p.element.style.left = p.x + "vh"
         p.element.style.bottom = p.y + "vh"
     }
+
+    drawTrails()
     if (!window.paused)
         requestAnimationFrame(doPhysics)
 }

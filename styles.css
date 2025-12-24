@@ -188,6 +188,11 @@ body {
     pointer-events: none;
 }
 
+.particle,
+.plate {
+    z-index: 1;
+}
+
 .plate-barmagnet {
     display: flex;
     border-radius: 3px;
@@ -282,4 +287,14 @@ body {
     height: 100vh;
     overflow: hidden;
     z-index: -1;
+}
+
+#trailCanvas {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 0;
 }
