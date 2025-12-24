@@ -231,6 +231,22 @@ body {
     align-items: center;
     justify-content: center;
 }
+.plate-electricplate .field-arrow {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 60%;
+    height: 60%;
+}
+.plate-electricplate .field-arrow path {
+    stroke: #ffcc00;
+    stroke-width: 2.5;
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    filter: drop-shadow(0 0 3px rgba(255,204,0,0.6));
+}
 .plate-electricplate::before {
     content: '';
     position: absolute;

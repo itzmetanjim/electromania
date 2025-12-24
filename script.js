@@ -24,8 +24,10 @@ document.body.addEventListener("contextmenu", (e)=>{
     const rect = world.getBoundingClientRect()
     const x = pxtovh(e.clientX - rect.left)
     const y = pxtovh(rect.bottom - e.clientY)
-    if (!delParticleNearest(x, y)) {
-        delPlateNearest(x, y)
+    // Priority: delete particle only if cursor is actually on it.
+    // Otherwise, delete a plate only if cursor is on it.
+    if (!delParticleAt(x, y)) {
+        delPlateAt(x, y)
     }
 })
 
@@ -71,49 +73,54 @@ const createElectron = (x, y, vx, vy) => {
     return electron
 }
 
-const delParticleNearest = (x, y) => {
-    let nearestIndex = -1
-    let nearestDist = Infinity
+const delParticleAt = (x, y) => {
+    // Only delete if the cursor is within the particle's visual radius.
+    // (proton/neutron are 10vh, electron is 7.5vh)
+    let hitIndex = -1
+    let hitDist = Infinity
     for (let i = 0; i < particleData.length; i++) {
         const p = particleData[i]
-        const dx = p.x - x
-        const dy = p.y - y
+        const radius = (p.charge === -1) ? 3.75 : 5
+        const cx = p.x + radius
+        const cy = p.y + radius
+        const dx = cx - x
+        const dy = cy - y
         const dist = Math.sqrt(dx * dx + dy * dy)
-        if (dist < nearestDist) {
-            nearestDist = dist
-            nearestIndex = i
+        if (dist <= radius && dist < hitDist) {
+            hitDist = dist
+            hitIndex = i
         }
     }
-    if (nearestIndex !== -1) {
-        const p = particleData[nearestIndex]
+    if (hitIndex !== -1) {
+        const p = particleData[hitIndex]
         p.element.remove()
-        particleData.splice(nearestIndex, 1)
+        particleData.splice(hitIndex, 1)
         return true
     }
     return false
 }
 
-const delPlateNearest = (x, y) => {
-    let nearestIndex = -1
-    let nearestDist = Infinity
-    for (let i = 0; i < plateData.length; i++) {
+const pointInRotatedRect = (rect, x, y) => {
+    const rot = (rect.rotation || 0) * Math.PI / 180
+    const cx = rect.x + rect.width / 2
+    const cy = rect.y + rect.height / 2
+    const dx = x - cx
+    const dy = y - cy
+    const localX = dx * Math.cos(-rot) - dy * Math.sin(-rot)
+    const localY = dx * Math.sin(-rot) + dy * Math.cos(-rot)
+    return Math.abs(localX) <= rect.width / 2 && Math.abs(localY) <= rect.height / 2
+}
+
+const delPlateAt = (x, y) => {
+    // Delete the top-most plate the cursor is actually over.
+    for (let i = plateData.length - 1; i >= 0; i--) {
         const p = plateData[i]
-        const cx = p.x + p.width / 2
-        const cy = p.y + p.height / 2
-        const dx = cx - x
-        const dy = cy - y
-        const dist = Math.sqrt(dx * dx + dy * dy)
-        if (dist < nearestDist) {
-            nearestDist = dist
-            nearestIndex = i
+        if (pointInRotatedRect(p, x, y)) {
+            p.element.remove()
+            plateData.splice(i, 1)
+            if (lastPlacedPlate === p) lastPlacedPlate = null
+            return true
         }
-    }
-    if (nearestIndex !== -1) {
-        const p = plateData[nearestIndex]
-        p.element.remove()
-        plateData.splice(nearestIndex, 1)
-        if (lastPlacedPlate === p) lastPlacedPlate = null
-        return true
     }
     return false
 }
@@ -172,20 +179,31 @@ const createElectricPlate = (x, y, width, height, rotation = 0) => {
     plate.style.height = height + "vh"
     plate.style.transform = `rotate(${rotation}deg)`
     plate.style.transformOrigin = "center center"
-    plate.innerHTML = '<span style="color:#ffcc00;font-size:' + Math.min(width, height) * 0.4 + 'vh">⚡</span>'
+    // Arrow shows the direction a proton would accelerate inside the plate.
+    plate.innerHTML = `
+        <svg class="field-arrow" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 20V6" />
+            <path d="M7 11L12 6L17 11" />
+        </svg>
+    `
     world.appendChild(plate)
     const data = {
         element: plate,
         type: 'electricplate',
         x, y, width, height, rotation,
-        strength: 30, // electric field strength
-        charge: -1 // negative plate
+        // strength is a "gameplay" field value (not real units)
+        strength: 8,
+        // +1 means the arrow direction is the force direction for a proton.
+        charge: 1
     }
     plateData.push(data)
     lastPlacedPlate = data
     return data
 }
-const createHorseshoeMagnet = (a,b,c,d,e)=>{alert("didnt we just remove horseshoes")}
+// Horseshoe magnets were removed; keep this symbol harmless if referenced.
+// (Some older codepaths or cached pages might still call it.)
+// eslint-disable-next-line no-unused-vars
+const createHorseshoeMagnet = () => null
 
 // Calculate field effects from plates on a particle
 const calcPlateForces = (particle) => {
@@ -201,34 +219,47 @@ const calcPlateForces = (particle) => {
         const dy = py - cy
         const dist = Math.sqrt(dx * dx + dy * dy)
         if (dist < 0.5) continue // minimum distance to prevent extreme forces
-        const nx = dx / dist
-        const ny = dy / dist
         const rotRad = plate.rotation * Math.PI / 180
+
+        // Local coords (plate space)
+        const localX = dx * Math.cos(-rotRad) - dy * Math.sin(-rotRad)
+        const localY = dx * Math.sin(-rotRad) + dy * Math.cos(-rotRad)
+        const insidePlate = Math.abs(localX) <= plate.width / 2 && Math.abs(localY) <= plate.height / 2
         
         if (plate.type === 'barmagnet') {
+            // Use a simple 2D Lorentz force with B out of the screen (Bz).
+            // This bends paths into circles instead of "kicking" particles away.
             if (particle.charge !== 0) {
                 const speed = Math.sqrt(particle.vx * particle.vx + particle.vy * particle.vy)
-                if (speed > 0.01) {
-                    const bx = Math.cos(rotRad)
-                    const by = Math.sin(rotRad)
-                    const distCubed = dist * dist * dist
-                    const fieldStrength = plate.strength / (distCubed + 10)
-                    const crossZ = particle.vx * by - particle.vy * bx
-                    const perpX = -particle.vy / speed
-                    const perpY = particle.vx / speed
-                    const forceMag = particle.charge * fieldStrength * crossZ * 0.1
-                    
-                    fx += forceMag * perpX
-                    fy += forceMag * perpY
+                if (speed > 0.001) {
+                    // Strong and fairly uniform inside the magnet's rectangle, gentle fringe outside.
+                    const Bz = insidePlate
+                        ? plate.strength
+                        : plate.strength * 0.15 / (dist * dist + 20)
+
+                    // Gameplay tweak: multiply by mass so both protons and electrons visibly curve.
+                    // (Acceleration later divides by mass.)
+                    const massFactor = particle.mass
+
+                    // F = q (v x B) with B=(0,0,Bz) => Fx = q*vy*Bz, Fy = -q*vx*Bz
+                    fx += particle.charge * particle.vy * Bz * massFactor
+                    fy += -particle.charge * particle.vx * Bz * massFactor
                 }
             }
         } else if (plate.type === 'electricplate') {
+            // Uniform-ish electric field inside the plate's rectangle, oriented by rotation.
+            // Arrow indicates direction a proton accelerates.
             if (particle.charge !== 0) {
                 const ex = -Math.sin(rotRad)
                 const ey = Math.cos(rotRad)
-                const fieldStrength = plate.strength * plate.charge / (dist * dist + 5)
-                fx += -particle.charge * fieldStrength * ex * 0.5
-                fy += -particle.charge * fieldStrength * ey * 0.5
+                const E = insidePlate ? (plate.strength * plate.charge) : 0
+
+                // Gameplay tweak: multiply by mass so electrons don't get instantly flung.
+                const massFactor = particle.mass
+
+                // F = qE
+                fx += particle.charge * E * ex * massFactor
+                fy += particle.charge * E * ey * massFactor
             }
         }
     }
@@ -378,13 +409,13 @@ const isPlateSelected = () => {
     return ["barmagnet", "electricplate"].includes(window.selected)
 }
 
-// Drag-to-add: initial point = position, drag vector = velocity
 let dragStart = null
 let dragPreview = null
 let dragArrow = null
 let shiftCircle = null
-let dragMode = null // 'spawn', 'move', 'launch', 'plate', 'rotate'
-let affectedParticles = [] // particles being moved by shift+drag
+let dragMode = null 
+let affectedParticles = [] 
+let affectedPlates = [] 
 let platePreview = null
 
 const particleOffset = 5
@@ -398,7 +429,12 @@ const createPlatePreview = (type, x, y, width, height) => {
         plate.innerHTML = '<div class="pole-n">N</div><div class="pole-s">S</div>'
     } else if (type === 'electricplate') {
         plate.className = "plate plate-electricplate plate-preview"
-        plate.innerHTML = '<span style="color:#ffcc00;font-size:' + Math.min(width, height) * 0.4 + 'vh">⚡</span>'
+        plate.innerHTML = `
+            <svg class="field-arrow" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 20V6" />
+                <path d="M7 11L12 6L17 11" />
+            </svg>
+        `
     }
     plate.style.left = x + "vh"
     plate.style.bottom = y + "vh"
@@ -475,6 +511,28 @@ const getParticlesInRadius = (x, y, radius) => {
     return result
 }
 
+const getPlatesInRadius = (x, y, radius) => {
+    const result = []
+    for (let i = 0; i < plateData.length; i++) {
+        const p = plateData[i]
+        const cx = p.x + p.width / 2
+        const cy = p.y + p.height / 2
+        const rot = (p.rotation || 0) * Math.PI / 180
+        const dx = x - cx
+        const dy = y - cy
+        const localX = dx * Math.cos(-rot) - dy * Math.sin(-rot)
+        const localY = dx * Math.sin(-rot) + dy * Math.cos(-rot)
+        const qx = Math.max(Math.abs(localX) - p.width / 2, 0)
+        const qy = Math.max(Math.abs(localY) - p.height / 2, 0)
+        const dist = Math.sqrt(qx * qx + qy * qy)
+
+        if (dist <= radius) {
+            result.push({ index: i, plate: p, offsetX: cx - x, offsetY: cy - y })
+        }
+    }
+    return result
+}
+
 document.body.addEventListener("mousedown", (e)=>{
     if (e.button !== 0) return // only left click
     if (e.target.closest('.selector')) return // ignore clicks on selector
@@ -520,15 +578,15 @@ document.body.addEventListener("mousedown", (e)=>{
         return
     }
     
-    if (e.shiftKey && !e.ctrlKey && !e.altKey && !isPlateSelected()) {
+    if (e.shiftKey && !e.ctrlKey && !e.altKey) {
         dragMode = 'move'
         dragStart = { x: x, y: y, clientX: e.clientX, clientY: e.clientY }
         const radius = window.launchPower * 5
         affectedParticles = getParticlesInRadius(x, y, radius)
+        affectedPlates = getPlatesInRadius(x, y, radius)
         return
     }
-    
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && !isPlateSelected()) {
+    if (e.ctrlKey && !e.shiftKey && !e.altKey) {
         dragMode = 'launch'
         dragStart = { x: x, y: y, clientX: e.clientX, clientY: e.clientY }
         const radius = window.launchPower * 5
@@ -645,6 +703,7 @@ document.body.addEventListener("mouseup", (e)=>{
     dragStart = null
     dragMode = null
     affectedParticles = []
+    affectedPlates = []
 })
 
 document.body.addEventListener("mousemove", (e)=>{
@@ -653,7 +712,7 @@ document.body.addEventListener("mousemove", (e)=>{
     const y = pxtovh(rect.bottom - e.clientY)
     curloc.innerText = `Cursor Location: x=${x.toFixed(2)} vh, y=${y.toFixed(2)} vh`
     
-    const showCircle = (e.shiftKey || e.ctrlKey) && dragMode !== 'spawn' && dragMode !== 'plate' && !isPlateSelected()
+    const showCircle = (e.shiftKey || e.ctrlKey) && dragMode !== 'spawn' && dragMode !== 'plate'
     updateShiftCircle(x, y, showCircle)
     
     if (!dragStart) return
@@ -682,6 +741,15 @@ document.body.addEventListener("mousemove", (e)=>{
             particle.element.style.left = particle.x + "vh"
             particle.element.style.bottom = particle.y + "vh"
         }
+
+        for (const { plate, offsetX, offsetY } of affectedPlates) {
+            const newCenterX = dragStart.x + offsetX + dx
+            const newCenterY = dragStart.y + offsetY + dy
+            plate.x = newCenterX - plate.width / 2
+            plate.y = newCenterY - plate.height / 2
+            plate.element.style.left = plate.x + "vh"
+            plate.element.style.bottom = plate.y + "vh"
+        }
     }
     
     if (dragMode === 'plate' && platePreview) {
@@ -701,15 +769,14 @@ document.body.addEventListener("mousemove", (e)=>{
         const cy = lastPlacedPlate.y + lastPlacedPlate.height / 2
         const dx = x - cx
         const dy = y - cy
-        const angle = Math.atan2(dy, dx) * 180 / Math.PI
-        
+        const angle = -Math.atan2(dy, dx) * 180 / Math.PI
         lastPlacedPlate.rotation = angle
         lastPlacedPlate.element.style.transform = `rotate(${angle}deg)`
     }
 })
 
 document.body.addEventListener("keyup", (e) => {
-    if (e.key === "Shift") {
+    if (e.key === "Shift" || e.key === "Control") {
         updateShiftCircle(0, 0, false)
     }
 })
